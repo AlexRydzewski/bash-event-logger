@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+#
+# bash-event-logger — centralized event control, logging, verbosity, and
+# tolerance for Bash scripts (optional file logging, TTY stderr, syslog).
+#
+# Version: 1.0.0
+# Date:    2026-05-14
+#
+# SPDX-License-Identifier: MIT
+# See LICENSE in this repository for full license text.
+#
+# 1.2. Define the global essential configuration and constants.
+readonly PROG_NAME="$(basename -- "$0")"
+readonly PID=$$
+
+# 2. Setup journaling and event treatment.
+
+# 2.1. Define the event control function.
+: "${TOLERANCE:=3}" "${VERBOSITY:=5}"
+
+__event_control() {
+    # Second argument = event level when omitted defaults to ${TOLERANCE:-3} (not a fixed 3): higher
+    # TOLERANCE raises that default, i.e. looser handling. Level 0: stop but exit 0 (special case).
+
+    #      Debug        |        Info       |         Warning           |           Error           | Silent    
+    #---------------------------------------------------------------------------------------------------------------------
+    #   Success, vars   | About performing  | If something is wrong but | If something is wrong and | Exit with zero status
+    #                   | normal operations | continuation is possible  | stops the execution       | no output
+    #---------------------------------------------------------------------------------------------------------------------
+    #      9 | 8        |  7  |   6   |  5  |          4 | 3            |           2 | 1           |   0
+
+    # Typically:
+    # 2,3 - critical errors without the ability to continue
+    # 4,5 - warnings or non-fatal errors that allow the script to continue
+    # 6 - messages at the beginning of the function
+    # 7 - messages at the beginning of the operation
+    # 8 - about successful execution
+    # 9 - something unnecessary
+
+    # If event level is above VERBOSITY, suppress; if below TOLERANCE floor, skip acting (return) or exit.
+    [[ ${2:-${TOLERANCE:-3}} -eq 0 ]] && local status=0
+    [[ ${2:-5} -gt ${VERBOSITY:-5} ]] && { [[ ${2:-3} -ge ${TOLERANCE:-3} ]] && return; exit; }
+
+    [[ -n "${LOG_FILE:-}" ]] &&
+      { [[ -d "$(dirname -- "$LOG_FILE")" ]] ||
+            if [[ ${TOLERANCE:-3} -ge 3 ]]; then
+                mkdir -p "$(dirname -- "$LOG_FILE")" || { local error_message="Cannot create directory '$(dirname -- "$LOG_FILE")'"; false; }
+            else
+                local error_message="Directory '$(dirname -- "$LOG_FILE")' doesn't exist"; false
+            fi &&
+                # : The POSIX "null" builtin - a no-op that simply returns exit status 0.
+                # We need some command to attach redirection to; : is the lightest possible.
+                ( umask 077 && : >>"$LOG_FILE" ) || { local error_message="Cannot write to '$LOG_FILE'"; false; } ||
+                  { if [[ -t 1 ]]; then printf '%s\n' "$(date "+%b %d %H:%M:%S") [$PID]: $error_message"
+                    else logger ${logger_opts:-"--tag=${PROG_NAME}[$PID]"} "${message_prefix}$error_message"; fi
+                    [[ ${2:-3} -lt ${TOLERANCE:-3} ]] && exit 1; unset LOG_FILE; return; }
+
+        echo "$(date "+%b %d %H:%M:%S") ${HOSTNAME:-localhost} ${PROG_NAME}[$PID]: $1" >> "$LOG_FILE"
+        [[ ${2:-3} -ge ${TOLERANCE:-3} ]] && return; exit $status; }
+
+    # Interactive TTY with no LOG_FILE -> send logs to stderr to keep stdout clean and useful.
+    [[ -t 1 ]] && { printf '%s\n' "$(date "+%b %d %H:%M:%S") [$PID]: $1" 1>&2; [[ ${2:-3} -ge ${TOLERANCE:-3} ]] && return; exit $status; }
+     logger ${logger_opts:-"--tag=${PROG_NAME}[$PID]"} "$message_prefix$1"; [[ ${2:-3} -ge ${TOLERANCE:-3} ]] && return; exit $status
+}
+
+# 2.2. Tune message format for logger.
+
+# It worth to consider using uid as alternative to WHOAMI for logger_opts and other purposes.
+WHOAMI=$(id -un 2>/dev/null || echo unknown)
+
+# Here message_prefix and logger_opts unset explicitly to avoid accidental reuse of parent shells.
+[[ "$(printf '%s\n' "2.27.0" "$(logger --version 2>/dev/null | grep -Eo '[0-9.]+' || echo 0)" | sort -V | head -n1)" = "2.27.0" ]] &&
+    if [[ "${WHOAMI}" = "root" ]]; then logger_opts="--id=$PID --tag=$PROG_NAME"; unset message_prefix;
+    else message_prefix="($PID) "; unset logger_opts; fi
+
+__event_control "The script is running as '$WHOAMI' with PID '$PID'" 5
