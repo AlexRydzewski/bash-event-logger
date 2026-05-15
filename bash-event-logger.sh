@@ -3,11 +3,13 @@
 # bash-event-logger — centralized event control, logging, verbosity, and
 # tolerance for Bash scripts (optional file logging, TTY stderr, syslog).
 #
-# Version: 1.0.0
+readonly VERSION="1.0.0"
 # Date:    2026-05-14
 #
+# Author: Alexander Rydzewski <alexander@rydzewski.com>
+#
 # SPDX-License-Identifier: MIT
-# See LICENSE in this repository for full license text.
+# See LICENSE; documentation: bash-event-logger.md
 #
 # 1.2. Define the global essential configuration and constants.
 readonly PROG_NAME="$(basename -- "$0")"
@@ -73,4 +75,4 @@ WHOAMI=$(id -un 2>/dev/null || echo unknown)
     if [[ "${WHOAMI}" = "root" ]]; then logger_opts="--id=$PID --tag=$PROG_NAME"; unset message_prefix;
     else message_prefix="($PID) "; unset logger_opts; fi
 
-__event_control "The script is running as '$WHOAMI' with PID '$PID'" 5
+__event_control "The script ${VERSION} is running as '$WHOAMI' with PID '$PID'" 5
